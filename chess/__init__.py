@@ -1472,33 +1472,56 @@ class Board(BaseBoard):
         super().set_piece_at(square, piece, promoted=promoted)
         self.clear_stack()
 
-    def generate_pseudo_legal_moves(self, from_mask: Bitboard = BB_ALL, to_mask: Bitboard = BB_ALL) -> Iterator[Move]:
+    def generate_pseudo_legal_moves(self,ptype = "all" ,from_mask: Bitboard = BB_ALL, to_mask: Bitboard = BB_ALL) -> Iterator[Move]:
         our_pieces = self.occupied_co[self.turn]
+        if ptype == "all" or ptype =="piece":
+            # Generate piece moves.
+            non_pawns = our_pieces & ~self.pawns & from_mask
+            for from_square in scan_reversed(non_pawns):
+                moves = self.attacks_mask(from_square) & ~our_pieces & to_mask
+                for to_square in scan_reversed(moves):
+                    yield Move(from_square, to_square)
 
-        # Generate piece moves.
-        non_pawns = our_pieces & ~self.pawns & from_mask
-        for from_square in scan_reversed(non_pawns):
-            moves = self.attacks_mask(from_square) & ~our_pieces & to_mask
-            for to_square in scan_reversed(moves):
-                yield Move(from_square, to_square)
+            # Generate castling moves.
+            if from_mask & self.kings:
+                yield from self.generate_castling_moves(from_mask, to_mask)
+        if ptype == "all" or ptype == "pawn":
+            # The remaining moves are all pawn moves.
+            pawns = self.pawns & self.occupied_co[self.turn] & from_mask
+            if not pawns:
+                return
 
-        # Generate castling moves.
-        if from_mask & self.kings:
-            yield from self.generate_castling_moves(from_mask, to_mask)
+            # Generate pawn captures.
+            capturers = pawns
+            for from_square in scan_reversed(capturers):
+                targets = (
+                    BB_PAWN_ATTACKS[self.turn][from_square] &
+                    self.occupied_co[not self.turn] & to_mask)
 
-        # The remaining moves are all pawn moves.
-        pawns = self.pawns & self.occupied_co[self.turn] & from_mask
-        if not pawns:
-            return
+                for to_square in scan_reversed(targets):
+                    if square_rank(to_square) in [0, 7]:
+                        yield Move(from_square, to_square, QUEEN)
+                        yield Move(from_square, to_square, ROOK)
+                        yield Move(from_square, to_square, BISHOP)
+                        yield Move(from_square, to_square, KNIGHT)
+                    else:
+                        yield Move(from_square, to_square)
 
-        # Generate pawn captures.
-        capturers = pawns
-        for from_square in scan_reversed(capturers):
-            targets = (
-                BB_PAWN_ATTACKS[self.turn][from_square] &
-                self.occupied_co[not self.turn] & to_mask)
+            # Prepare pawn advance generation.
+            if self.turn == WHITE:
+                single_moves = pawns << 8 & ~self.occupied
+                double_moves = single_moves << 8 & ~self.occupied & (BB_RANK_3 | BB_RANK_4)
+            else:
+                single_moves = pawns >> 8 & ~self.occupied
+                double_moves = single_moves >> 8 & ~self.occupied & (BB_RANK_6 | BB_RANK_5)
 
-            for to_square in scan_reversed(targets):
+            single_moves &= to_mask
+            double_moves &= to_mask
+
+            # Generate single pawn moves.
+            for to_square in scan_reversed(single_moves):
+                from_square = to_square + (8 if self.turn == BLACK else -8)
+
                 if square_rank(to_square) in [0, 7]:
                     yield Move(from_square, to_square, QUEEN)
                     yield Move(from_square, to_square, ROOK)
@@ -1507,37 +1530,14 @@ class Board(BaseBoard):
                 else:
                     yield Move(from_square, to_square)
 
-        # Prepare pawn advance generation.
-        if self.turn == WHITE:
-            single_moves = pawns << 8 & ~self.occupied
-            double_moves = single_moves << 8 & ~self.occupied & (BB_RANK_3 | BB_RANK_4)
-        else:
-            single_moves = pawns >> 8 & ~self.occupied
-            double_moves = single_moves >> 8 & ~self.occupied & (BB_RANK_6 | BB_RANK_5)
-
-        single_moves &= to_mask
-        double_moves &= to_mask
-
-        # Generate single pawn moves.
-        for to_square in scan_reversed(single_moves):
-            from_square = to_square + (8 if self.turn == BLACK else -8)
-
-            if square_rank(to_square) in [0, 7]:
-                yield Move(from_square, to_square, QUEEN)
-                yield Move(from_square, to_square, ROOK)
-                yield Move(from_square, to_square, BISHOP)
-                yield Move(from_square, to_square, KNIGHT)
-            else:
+            # Generate double pawn moves.
+            for to_square in scan_reversed(double_moves):
+                from_square = to_square + (16 if self.turn == BLACK else -16)
                 yield Move(from_square, to_square)
 
-        # Generate double pawn moves.
-        for to_square in scan_reversed(double_moves):
-            from_square = to_square + (16 if self.turn == BLACK else -16)
-            yield Move(from_square, to_square)
-
-        # Generate en passant captures.
-        if self.ep_square:
-            yield from self.generate_pseudo_legal_ep(from_mask, to_mask)
+            # Generate en passant captures.
+            if self.ep_square:
+                yield from self.generate_pseudo_legal_ep(from_mask, to_mask)
 
     def generate_pseudo_legal_moves_piece(self, from_mask: Bitboard = BB_ALL, to_mask: Bitboard = BB_ALL) -> Iterator[Move]:
         our_pieces = self.occupied_co[self.turn]
